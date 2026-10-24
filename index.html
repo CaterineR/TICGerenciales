@@ -133,7 +133,7 @@ footer.sitefoot{border-top:1px solid var(--line); background:var(--panel); paddi
     <div class="statusrow"><span class="statustag ok">Implementada y probada</span><span>Exploración 3D interactiva (rotar, acercar, seleccionar figuras, ver información). Se probó de punta a punta con pruebas automatizadas antes de entregarse.</span></div>
     <div class="statusrow"><span class="statustag ok">Implementada y probada</span><span>Detección automática de compatibilidad con Realidad Aumentada (WebXR) y bloqueo del botón con mensaje claro cuando el dispositivo no es compatible.</span></div>
     <div class="statusrow"><span class="statustag ok">Implementada y probada</span><span>Modo accesible en texto, independiente del renderizado 3D.</span></div>
-    <div class="statusrow"><span class="statustag warn">Implementada, sin poder probarse en un dispositivo real con cámara</span><span>La sesión de Realidad Aumentada en sí (colocar el modelo sobre una superficie real usando la cámara del celular) está programada con la API estándar WebXR, pero este entorno de desarrollo no tiene un dispositivo físico con cámara ni soporte de RA para abrirla y comprobarla de extremo a extremo. Para probarla de verdad: sube el archivo a un servidor con HTTPS (abrirlo con doble clic, por <code>file://</code>, nunca activará la Realidad Aumentada, sea cual sea el dispositivo) y ábrelo desde esa dirección en Chrome, en un celular Android compatible con ARCore, usando el botón "Ver en Realidad Aumentada".</span></div>
+    <div class="statusrow"><span class="statustag warn">Implementada; probada en un dispositivo real, sin lograrse la colocación en RA</span><span>La sesión de Realidad Aumentada en sí (colocar el modelo sobre una superficie real usando la cámara del celular) está programada con la API estándar WebXR, con tres niveles de configuración (detección de superficies, RA básica sin detección, y mensajes de error específicos). Se probó en un celular Android real, publicado por HTTPS: el sitio detectó correctamente que el navegador soporta la API, pero la apertura de la sesión de RA falló en los tres niveles. La causa identificada: ese dispositivo no tiene instalada la app "Google Play Services para RA" (ARCore) y no está certificado por Google para ella — una limitación del dispositivo, no del código ni del sitio (Chrome puede reportar soporte de la API sin que el dispositivo pueda realmente ejecutar una sesión). La Realidad Aumentada en la web depende de que el celular esté en la lista de dispositivos ARCore de Google; no todos los Android lo están, sobre todo modelos de entrada o de ciertas marcas. Queda pendiente probarla en un dispositivo certificado (por ejemplo un Google Pixel o un Samsung Galaxy de gama media/alta reciente) para confirmar que, en un celular compatible, la colocación en RA sí funciona de extremo a extremo.</span></div>
   </div>
   <div class="note">Si tu institución necesita la experiencia de RA garantizada en todos los dispositivos, la alternativa recomendada es exportar el modelo a un visor de RA nativo (por ejemplo, Google Scene Viewer o Apple Quick Look) con un archivo 3D (.glb/.usdz); eso implica construir y probar ese archivo por separado, y no está incluido en este prototipo.</div>
 </main>
@@ -1563,7 +1563,14 @@ async function startAR(){
     });
   }catch(err){
     arWarnBox.hidden = false;
-    arWarnBox.textContent = "No se pudo iniciar la sesión de Realidad Aumentada en este dispositivo, ni siquiera en su modo más básico: " + err.message + ". Se mantiene la exploración 3D.";
+    // "NotSupportedError" / "specified session configuration is not supported" al fallar
+    // incluso la configuración más básica, pese a que isSessionSupported() reportó compatibilidad,
+    // es el patrón típico de un dispositivo sin "Google Play Services para RA" (ARCore) instalado
+    // o no certificado por Google para ARCore — no es algo que esta página pueda resolver.
+    const pistaArCore = (err && (err.name === "NotSupportedError" || /not supported/i.test(err.message || "")))
+      ? " La causa más probable: a tu celular le falta la app \"Google Play Services para RA\" (ARCore), o tu modelo no está certificado por Google para usarla. Revisa en Play Store si esa app está instalada y actualizada; si no aparece disponible para tu modelo, este celular no podrá ejecutar Realidad Aumentada real en ningún sitio web, no solo en este."
+      : "";
+    arWarnBox.textContent = "No se pudo iniciar la sesión de Realidad Aumentada en este dispositivo, ni siquiera en su modo más básico (" + err.message + ")." + pistaArCore + " Se mantiene la exploración 3D.";
     renderer.setAnimationLoop(renderLoop);
   }
 }
