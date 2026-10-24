@@ -1463,35 +1463,79 @@ function buildPlacedGroup(){
   return g;
 }
 
+// Algunos dispositivos aceptan "immersive-ar" pero no todas las
+// combinaciones de funciones adicionales (hit-test, dom-overlay). En vez de
+// rendirnos ante el primer rechazo, probamos configuraciones cada vez más
+// simples, de la más completa a la más básica, y usamos la primera que el
+// dispositivo acepte.
+async function requestArSessionWithFallback(){
+  const intentos = [
+    {requiredFeatures:["hit-test"], optionalFeatures:["dom-overlay"], domOverlay:{root: document.body}},
+    {requiredFeatures:["hit-test"]},
+    {} // RA básica, sin detección de superficies
+  ];
+  let ultimoError = null;
+  for(const opciones of intentos){
+    try{
+      const session = await navigator.xr.requestSession("immersive-ar", opciones);
+      return {session, pidioHitTest: !!(opciones.requiredFeatures && opciones.requiredFeatures.includes("hit-test"))};
+    }catch(err){
+      ultimoError = err;
+    }
+  }
+  throw ultimoError;
+}
+
 async function startAR(){
+  let hitTestDisponible = false;
   try{
     arWarnBox.hidden = true;
-    xrSession = await navigator.xr.requestSession("immersive-ar", {
-      requiredFeatures:["hit-test"],
-      optionalFeatures:["dom-overlay"],
-      domOverlay:{root: document.body}
-    });
+    const resultado = await requestArSessionWithFallback();
+    xrSession = resultado.session;
 
     renderer.xr.setReferenceSpaceType("local");
     await renderer.xr.setSession(xrSession);
 
-    reticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.08,0.1,32).rotateX(-Math.PI/2),
-      new THREE.MeshBasicMaterial({color:0xffffff})
-    );
-    reticle.visible = false;
-    scene.add(reticle);
-
     placedGroup = buildPlacedGroup();
     scene.add(placedGroup);
 
-    const viewerSpace = await xrSession.requestReferenceSpace("viewer");
-    xrHitTestSource = await xrSession.requestHitTestSource({space: viewerSpace});
     xrRefSpace = await xrSession.requestReferenceSpace("local");
 
+    // Intentamos activar la detección de superficies (hit-test) por
+    // separado: algunos dispositivos aceptan la sesión pero igual rechazan
+    // esta función puntual. Si falla, seguimos en modo "colocar al frente".
+    if(resultado.pidioHitTest){
+      try{
+        const viewerSpace = await xrSession.requestReferenceSpace("viewer");
+        xrHitTestSource = await xrSession.requestHitTestSource({space: viewerSpace});
+        hitTestDisponible = true;
+        reticle = new THREE.Mesh(
+          new THREE.RingGeometry(0.08,0.1,32).rotateX(-Math.PI/2),
+          new THREE.MeshBasicMaterial({color:0xffffff})
+        );
+        reticle.visible = false;
+        scene.add(reticle);
+      }catch(errHitTest){
+        hitTestDisponible = false;
+      }
+    }
+
+    if(!hitTestDisponible){
+      arWarnBox.hidden = false;
+      arWarnBox.textContent = "Tu dispositivo aceptó la Realidad Aumentada, pero no la detección automática de superficies: el modelo se colocará a una distancia fija frente a la cámara en vez de \"pegarse\" al piso o a una mesa.";
+    }
+
     xrSession.addEventListener("select", () => {
-      if(reticle.visible){
+      if(hitTestDisponible && reticle && reticle.visible){
         placedGroup.position.setFromMatrixPosition(reticle.matrix);
+        placedGroup.visible = true;
+      } else if(!hitTestDisponible){
+        // Sin hit-test: colocamos el modelo 1.2 m frente a la cámara, en el suelo visual aproximado.
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        dir.y = 0; dir.normalize();
+        placedGroup.position.copy(camera.position).addScaledVector(dir, 1.2);
+        placedGroup.position.y = camera.position.y - 0.8;
         placedGroup.visible = true;
       }
     });
@@ -1500,6 +1544,7 @@ async function startAR(){
       xrSession = null; xrHitTestSource = null;
       if(reticle){ scene.remove(reticle); reticle = null; }
       if(placedGroup){ scene.remove(placedGroup); placedGroup = null; }
+      renderer.setAnimationLoop(renderLoop);
     });
 
     renderer.setAnimationLoop((t, frame) => {
@@ -1518,7 +1563,7 @@ async function startAR(){
     });
   }catch(err){
     arWarnBox.hidden = false;
-    arWarnBox.textContent = "No se pudo iniciar la sesión de Realidad Aumentada en este dispositivo: " + err.message + ". Se mantiene la exploración 3D.";
+    arWarnBox.textContent = "No se pudo iniciar la sesión de Realidad Aumentada en este dispositivo, ni siquiera en su modo más básico: " + err.message + ". Se mantiene la exploración 3D.";
     renderer.setAnimationLoop(renderLoop);
   }
 }
